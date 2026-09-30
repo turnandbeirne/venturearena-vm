@@ -23,6 +23,7 @@ export const FEATURES: Record<string, Tier> = {
   cofounder_match: 'member',
   investor_match: 'vip',
   vouch: 'ceo',
+  vf_custom_settings: 'member',
 }
 
 export async function rpc<T = unknown>(fn: string, args?: Record<string, unknown>): Promise<T> {
