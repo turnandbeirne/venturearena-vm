@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth'
 import { ArchetypeBadge, PlayerCard, type CardData } from '../components/PlayerCard'
 
 type Game = { id: string; name: string; kind: string; tagline: string; skills: string[]; max_players: number; lesson_md: string | null }
-type OpenTable = { id: string; game_id: string; visibility: string; mode: string; status: string; created_at: string; invite_code: string; host: { username: string; archetype: string | null } | null; seats: { player_id: string; is_bot: boolean; profile: { username: string; archetype: string | null } | null }[] }
+type OpenTable = { id: string; game_id: string; visibility: string; mode: string; status: string; created_at: string; invite_code: string; host: { username: string; archetype: string | null } | null; seats: { player_id: string; is_bot: boolean; role: string; profile: { username: string; archetype: string | null } | null }[] }
 
 export default function Lobby() {
   const { profile, tier, allows } = useAuth(); const nav = useNavigate()
@@ -18,7 +18,7 @@ export default function Lobby() {
 
   const load = async () => {
     const { data: t } = await supabase.from('tables')
-      .select('id, game_id, visibility, mode, status, created_at, invite_code, host:profiles!tables_host_id_fkey(username, archetype), seats:table_seats(player_id, is_bot, profile:profiles(username, archetype))')
+      .select('id, game_id, visibility, mode, status, created_at, invite_code, host:profiles!tables_host_id_fkey(username, archetype), seats:table_seats(player_id, is_bot, role, profile:profiles(username, archetype))')
       .eq('status', 'open').eq('visibility', 'public').order('created_at', { ascending: false }).limit(30)
     setTables((t ?? []) as unknown as OpenTable[])
   }
@@ -52,7 +52,7 @@ export default function Lobby() {
     setErr(''); setCreating(game)
     try { const id = await rpc<string>('create_table', { p_game: game }); nav(`/t/${id}`) } catch (e) { setErr((e as Error).message) } finally { setCreating(null) }
   }
-  const join = async (id: string) => { setErr(''); try { await rpc('join_table', { p_table: id }); nav(`/t/${id}`) } catch (e) { setErr((e as Error).message) } }
+  const join = async (id: string, role: 'player' | 'observer' = 'player') => { setErr(''); try { await rpc('join_table', { p_table: id, p_role: role }); nav(`/t/${id}`) } catch (e) { setErr((e as Error).message) } }
   const quick = async (game: string) => { setErr(''); try { const id = await rpc<string>('quick_match', { p_game: game }); nav(`/t/${id}`) } catch (e) { setErr((e as Error).message) } }
 
   const playable = games.filter(g => g.id === 'connect4' || g.kind === 'external')
@@ -92,18 +92,23 @@ export default function Lobby() {
 
       <section>
         <h2 className="display font-bold text-lg mb-2">Open tables</h2>
-        {tables.length === 0 ? <div className="card p-6 text-center opacity-70">No open tables yet. Quick match will seat you with a bot if nobody shows in two minutes.</div> : (
+        {tables.length === 0 ? <div className="card p-6 text-center opacity-70">No open tables yet. Quick match will seat you with a bot if nobody shows in two minutes. Up to 7 people can be at any table: players fill the seats, everyone else watches and joins the debrief.</div> : (
           <div className="grid md:grid-cols-2 gap-3">
             {tables.map(t => {
               const g = games.find(x => x.id === t.game_id)
+              const players = t.seats.filter(s => s.role !== 'observer'); const watchers = t.seats.length - players.length
+              const seatsFull = players.length >= (g?.max_players ?? 2); const tableFull = t.seats.length >= 7
               return (
                 <div key={t.id} className="card p-4 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold">{g?.name ?? t.game_id} <span className="chip ml-1">{t.mode === 'turn_based' ? 'turn-based' : 'live'}</span></div>
-                    <div className="text-xs opacity-70">Hosted by {t.host?.username} · {t.seats.length}/{g?.max_players ?? 2} seated</div>
-                    <div className="flex -space-x-1 mt-2">{t.seats.map(s => <span key={s.player_id} title={s.is_bot ? 'Bot' : s.profile?.username}><ArchetypeBadge archetype={s.profile?.archetype} size="sm" /></span>)}</div>
+                    <div className="text-xs opacity-70">Hosted by {t.host?.username} · {players.length}/{g?.max_players ?? 2} playing{watchers ? ` · ${watchers} watching` : ''}</div>
+                    <div className="flex -space-x-1 mt-2">{players.map(s => <span key={s.player_id} title={s.is_bot ? 'Bot' : s.profile?.username}><ArchetypeBadge archetype={s.profile?.archetype} size="sm" /></span>)}</div>
                   </div>
-                  <button className="btn btn-gold" onClick={() => join(t.id)} disabled={t.seats.length >= (g?.max_players ?? 2)}>Join</button>
+                  <div className="flex flex-col gap-1">
+                    <button className="btn btn-gold text-sm" onClick={() => join(t.id)} disabled={seatsFull || tableFull}>{seatsFull ? 'Seats full' : 'Join'}</button>
+                    <button className="btn btn-ghost text-sm" onClick={() => join(t.id, 'observer')} disabled={tableFull} title="Watch, chat and join the debrief without playing">Watch</button>
+                  </div>
                 </div>
               )
             })}

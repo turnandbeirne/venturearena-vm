@@ -54,6 +54,7 @@ export default function Debrief() {
 
   const me = results.find(r => r.player_id === profile?.id)
   const others = results.filter(r => r.player_id !== profile?.id && !r.is_bot)
+  const iWatched = results.length > 0 && !results.some(r => r.player_id === profile?.id)
   const myAnswer = answers.find(a => a.player_id === profile?.id)
 
   if (!game) return <div className="opacity-60">Loading debrief…</div>
@@ -62,7 +63,8 @@ export default function Debrief() {
     <div className="max-w-2xl mx-auto space-y-5">
       <div className="card p-5">
         <div className="text-xs uppercase tracking-wide opacity-60">Result · {game.name}</div>
-        <div className="display text-3xl font-extrabold mt-1">{me ? (me.placement === 1 && others.every(o => o.placement > 1) ? 'You won' : me.placement === 1 ? 'Draw' : 'Good game') : 'Game over'}</div>
+        <div className="display text-3xl font-extrabold mt-1">{me ? (me.placement === 1 && others.every(o => o.placement > 1) ? 'You won' : me.placement === 1 ? 'Draw' : 'Good game') : iWatched ? 'You watched' : 'Game over'}</div>
+        {iWatched && <div className="text-sm opacity-70 mt-1">Observers don't get a rating change, but your take on the game counts in the debrief.</div>}
         <div className="mt-3 space-y-1">
           {results.map(r => (
             <div key={r.player_id} className="flex items-center gap-2 text-sm">

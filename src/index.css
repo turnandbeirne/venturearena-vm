@@ -18,6 +18,7 @@
 
 html, body, #root { height: 100%; }
 body { background: var(--color-navy); color: var(--color-cream); font-family: var(--font-sans); }
+@layer components {
 .display { font-family: var(--font-display); }
 .card { background: var(--color-navy-2); border: 1px solid rgba(255,255,255,0.08); border-radius: 1rem; }
 .btn { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.65rem 1.1rem; border-radius:.75rem; font-weight:600; transition:all .15s; }
@@ -29,6 +30,7 @@ body { background: var(--color-navy); color: var(--color-cream); font-family: va
 .chip { display:inline-flex; align-items:center; padding:.2rem .6rem; border-radius:999px; font-size:.75rem; background: rgba(255,255,255,0.08); }
 .input { width:100%; background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:.75rem; padding:.6rem .8rem; color:var(--color-cream); }
 .input:focus { outline: 2px solid var(--color-gold); outline-offset: 0; }
+}
 @keyframes pop { 0% { transform: scale(.6); opacity:0 } 100% { transform: scale(1); opacity:1 } }
 .pop { animation: pop .25s ease-out; }
 @keyframes drop { 0% { transform: translateY(-300%); } 100% { transform: translateY(0); } }

@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth'
 import { ArchetypeBadge, RepShield } from '../components/PlayerCard'
 import { Connect4Board, botMove, type C4State } from '../components/Connect4'
 
-type Seat = { player_id: string; seat: number; is_bot: boolean; profile: { username: string; display_name: string | null; archetype: string | null; stage: string | null; bio: string | null } | null; rep?: number }
+type Seat = { player_id: string; seat: number; is_bot: boolean; role: 'player' | 'observer'; profile: { username: string; display_name: string | null; archetype: string | null; stage: string | null; bio: string | null } | null; rep?: number }
 type TableRow = { id: string; game_id: string; host_id: string; visibility: string; mode: string; status: string; invite_code: string; state: C4State | null; external_match_id: string | null }
 type Game = { id: string; name: string; kind: string; max_players: number; reflection_questions: string[]; launch_url: string | null; skills: string[] }
 type Msg = { id: number; from_id: string; body: string; created_at: string; from?: { username: string } }
@@ -23,7 +23,6 @@ export default function TableRoom() {
   const [text, setText] = useState('')
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState(false)
-  const botThinking = useRef(false)
   const question = useRef(TABLE_QUESTIONS[Math.floor(Math.random() * TABLE_QUESTIONS.length)])
 
   const load = useCallback(async () => {
@@ -31,7 +30,7 @@ export default function TableRoom() {
     const { data: t } = await supabase.from('tables').select('*').eq('id', id).single()
     if (!t) { setErr('Table not found or private.'); return }
     setTable(t as TableRow)
-    const { data: s } = await supabase.from('table_seats').select('player_id, seat, is_bot, profile:profiles(username, display_name, archetype, stage, bio)').eq('table_id', id).order('seat')
+    const { data: s } = await supabase.from('table_seats').select('player_id, seat, is_bot, role, profile:profiles(username, display_name, archetype, stage, bio)').eq('table_id', id).order('seat')
     const seatRows = (s ?? []) as unknown as Seat[]
     const { data: reps } = await supabase.from('reputation').select('player_id, score').in('player_id', seatRows.map(x => x.player_id))
     setSeats(seatRows.map(x => ({ ...x, rep: (reps ?? []).find(r => r.player_id === x.player_id)?.score ?? 100 })))
@@ -56,26 +55,34 @@ export default function TableRoom() {
   // finished -> debrief
   useEffect(() => { if (table?.status === 'finished') nav(`/debrief/${table.id}`, { replace: true }) }, [table, nav])
 
-  const mySeat = seats.find(s => s.player_id === profile?.id)?.seat ?? null
+  const me = seats.find(s => s.player_id === profile?.id) ?? null
+  const players = seats.filter(s => s.role !== 'observer'); const observers = seats.filter(s => s.role === 'observer')
+  const mySeat = me && me.role === 'player' ? me.seat : null
   const isHost = table?.host_id === profile?.id
-  const isSeated = mySeat !== null
+  const isSeated = me !== null
+  const isObserver = me?.role === 'observer'
   const state = table?.state ?? null
 
-  // host drives the bot
+  // host drives the bot: exactly one bot move per position (keyed by move count)
+  const lastBotMove = useRef<string>('')
   useEffect(() => {
     if (!table || table.status !== 'playing' || !state || state.winner !== null || !isHost || table.game_id !== 'connect4') return
-    const botSeat = seats.find(s => s.is_bot && s.seat === state.turn)
-    if (!botSeat || botThinking.current) return
-    botThinking.current = true
+    const botSeat = seats.find(s => s.is_bot && s.role === 'player' && s.seat === state.turn)
+    if (!botSeat) return
+    const key = `${table.id}:${state.moves}`
+    if (lastBotMove.current === key) return
+    lastBotMove.current = key
     const t = setTimeout(async () => {
-      try { await rpc('make_move', { p_table: table.id, p_col: botMove(state.board, state.turn + 1) }) } catch { /* ignore */ }
-      botThinking.current = false
+      try { await rpc('make_move', { p_table: table.id, p_col: botMove(state.board, state.turn + 1) }) }
+      catch { lastBotMove.current = '' }
     }, 700)
     return () => clearTimeout(t)
   }, [table, state, seats, isHost])
 
   const act = async (fn: () => Promise<unknown>) => { setErr(''); try { await fn() } catch (e) { setErr((e as Error).message) } }
-  const sit = () => act(() => rpc('join_table', { p_table: id }))
+  const sit = () => act(() => rpc('join_table', { p_table: id, p_role: 'player' }))
+  const watch = () => act(() => rpc('join_table', { p_table: id, p_role: 'observer' }))
+  const switchRole = (role: 'player' | 'observer') => act(() => rpc('set_role', { p_table: id, p_role: role }))
   const addBot = () => act(() => rpc('add_bot', { p_table: id }))
   const start = () => act(() => rpc('start_table', { p_table: id }))
   const leave = () => act(async () => { await rpc('abandon_table', { p_table: id }); nav('/play') })
@@ -86,12 +93,13 @@ export default function TableRoom() {
     if (error) throw new Error(error.message)
     window.open(data.launch_url, '_blank')
   })
-  const copy = () => { navigator.clipboard.writeText(`${location.origin}/join/${table?.invite_code}`); setCopied(true); setTimeout(() => setCopied(false), 1500) }
+  const copy = (mode?: 'watch') => { navigator.clipboard.writeText(`${location.origin}/join/${table?.invite_code}${mode ? '/watch' : ''}`); setCopied(true); setTimeout(() => setCopied(false), 1500) }
 
   if (err && !table) return <div className="card p-6">{err} <button className="btn btn-ghost mt-3" onClick={() => nav('/play')}>Back to lobby</button></div>
   if (!table || !game) return <div className="opacity-60">Loading table…</div>
 
-  const seatColors = seats.map(s => SEAT_COLORS[s.seat])
+  const seatColors = players.map(s => SEAT_COLORS[s.seat])
+  const seatsFull = players.length >= game.max_players; const tableFull = seats.length >= 7
 
   return (
     <div className="grid lg:grid-cols-[1fr_320px] gap-6">
@@ -99,15 +107,16 @@ export default function TableRoom() {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div><h1 className="display text-2xl font-extrabold">{game.name}</h1><div className="text-xs opacity-70 capitalize">{table.status} · {table.mode === 'turn_based' ? 'turn-based' : 'live'} · {table.visibility}</div></div>
           <div className="flex gap-2">
-            <button className="btn btn-ghost text-sm" onClick={copy}>{copied ? 'Copied!' : 'Copy invite link'}</button>
-            <button className="btn btn-ghost text-sm" onClick={leave}>{table.status === 'playing' ? 'Forfeit' : 'Leave'}</button>
+            <button className="btn btn-ghost text-sm" onClick={() => copy()}>{copied ? 'Copied!' : 'Copy invite link'}</button>
+            <button className="btn btn-ghost text-sm" onClick={() => copy('watch')} title="A link that seats people as observers">Watch link</button>
+            <button className="btn btn-ghost text-sm" onClick={leave}>{isObserver ? 'Stop watching' : table.status === 'playing' ? 'Forfeit' : 'Leave'}</button>
           </div>
         </div>
         {err && <div className="card p-3 border-red-400/40 text-red-200 text-sm">{err}</div>}
 
         {/* seats */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-          {seats.map(s => (
+          {players.map(s => (
             <div key={s.player_id} className={`card p-3 flex items-center gap-2 ${state && state.turn === s.seat && table.status === 'playing' ? 'border-gold' : ''}`}>
               <span className="w-3 h-3 rounded-full shrink-0" style={{ background: SEAT_COLORS[s.seat] }} />
               <ArchetypeBadge archetype={s.profile?.archetype} size="sm" />
@@ -115,26 +124,34 @@ export default function TableRoom() {
               {!s.is_bot && <RepShield score={s.rep} />}
             </div>
           ))}
-          {Array.from({ length: Math.max(0, game.max_players - seats.length) }).map((_, i) => (
+          {Array.from({ length: Math.max(0, game.max_players - players.length) }).map((_, i) => (
             <div key={i} className="card p-3 border-dashed opacity-60 text-sm flex items-center justify-center">Open seat</div>
           ))}
+        </div>
+        <div className="card p-3 flex items-center gap-2 flex-wrap text-sm">
+          <span className="opacity-60">Watching ({observers.length}) · {7 - seats.length} spots left at this table</span>
+          {observers.map(o => <span key={o.player_id} className="chip gap-1"><ArchetypeBadge archetype={o.profile?.archetype} size="sm" />{o.profile?.display_name || o.profile?.username}</span>)}
+          {observers.length === 0 && <span className="opacity-40">Nobody yet. Observers chat, watch the board and join the debrief.</span>}
         </div>
 
         {/* actions */}
         {table.status === 'open' && (
           <div className="card p-4 flex flex-wrap gap-2 items-center">
-            {!isSeated && <button className="btn btn-gold" onClick={sit}>Take a seat</button>}
-            {isSeated && game.kind === 'builtin' && seats.length < game.max_players && <button className="btn btn-ghost" onClick={addBot}>Add a bot</button>}
-            {isHost && <button className="btn btn-gold" onClick={start} disabled={seats.length < 2}>Start game</button>}
-            {!isHost && isSeated && <span className="text-sm opacity-70">Waiting for the host to start…</span>}
+            {!isSeated && <button className="btn btn-gold" onClick={sit} disabled={seatsFull || tableFull}>{seatsFull ? 'Seats full' : 'Take a seat'}</button>}
+            {!isSeated && <button className="btn btn-ghost" onClick={watch} disabled={tableFull}>Watch</button>}
+            {isObserver && <button className="btn btn-gold" onClick={() => switchRole('player')} disabled={seatsFull}>Take a seat instead</button>}
+            {isSeated && !isObserver && !isHost && <button className="btn btn-ghost" onClick={() => switchRole('observer')}>Watch instead</button>}
+            {isSeated && game.kind === 'builtin' && !seatsFull && <button className="btn btn-ghost" onClick={addBot}>Add a bot</button>}
+            {isHost && <button className="btn btn-gold" onClick={start} disabled={players.length < 2}>Start game</button>}
+            {!isHost && isSeated && <span className="text-sm opacity-70">{isObserver ? "You're watching. " : ''}Waiting for the host to start…</span>}
             <div className="w-full text-sm opacity-80 mt-2"><span className="opacity-60">Question of the table:</span> {question.current}</div>
           </div>
         )}
 
         {table.status === 'playing' && game.id === 'connect4' && state && (
           <div className="card p-4">
-            <div className="text-sm mb-3">{state.winner !== null ? 'Game over' : state.turn === mySeat ? <span className="text-gold font-semibold">Your move</span> : `Waiting for ${seats.find(s => s.seat === state.turn)?.profile?.username ?? '…'}`}</div>
-            <Connect4Board state={state} mySeat={mySeat} seatColors={seatColors} onMove={move} disabled={!isSeated} />
+            <div className="text-sm mb-3">{state.winner !== null ? 'Game over' : state.turn === mySeat ? <span className="text-gold font-semibold">Your move</span> : `${isObserver ? 'Watching · ' : ''}Waiting for ${players.find(s => s.seat === state.turn)?.profile?.username ?? '…'}`}</div>
+            <Connect4Board state={state} mySeat={mySeat} seatColors={seatColors} onMove={move} disabled={!isSeated || isObserver} />
             <div className="text-xs opacity-60 mt-3">What to watch for: control the center column; build threats in two directions at once.</div>
           </div>
         )}
@@ -143,7 +160,7 @@ export default function TableRoom() {
           <div className="card p-5">
             <div className="display font-bold text-lg">Play {game.name} in its own tab</div>
             <p className="text-sm opacity-75 mt-1">The arena signs a token so {game.name} knows who is at this table. When the round ends, the result comes back here and everyone lands in the Debrief.</p>
-            <button className="btn btn-gold mt-3" onClick={launch}>Launch {game.name}</button>
+            {isObserver ? <p className="text-sm mt-3 opacity-70">You're watching this one. The result and the debrief will show up here when the round ends.</p> : <button className="btn btn-gold mt-3" onClick={launch}>Launch {game.name}</button>}
             <p className="text-xs opacity-50 mt-2">Waiting for a result from the game…</p>
           </div>
         )}

@@ -1,7 +1,7 @@
 // Stripe Checkout for a tier. Secrets: STRIPE_SECRET_KEY, PRICE_MEMBER, PRICE_VIP, PRICE_CEO, ARENA_URL
 import Stripe from 'npm:stripe@17'
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { cors, json } from '../_shared/cors.ts'
+import { cors, json } from './cors.ts'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })

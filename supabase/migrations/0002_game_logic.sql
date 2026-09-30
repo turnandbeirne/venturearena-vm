@@ -333,3 +333,9 @@ begin
   if (select tier from profiles where id = auth.uid()) <> 'ceo' then raise exception 'admin only'; end if;
   update profiles set tier = p_tier, tier_expires_at = null where username = p_username;
 end $$;
+
+-- only server-side callers (service role / edge functions) may write results directly
+revoke execute on function record_result(uuid, jsonb) from public, anon, authenticated;
+revoke execute on function finish_builtin(uuid, int) from public, anon, authenticated;
+revoke execute on function generate_recommendations(uuid) from public, anon, authenticated;
+revoke execute on function c4_winner(jsonb) from public, anon, authenticated;

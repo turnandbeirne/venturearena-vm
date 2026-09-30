@@ -1,8 +1,8 @@
 // Game -> arena. Verifies the launch token and records placements, ratings, reputation and telemetry.
 // Body: { token, external_match_id?, results: [{ player_id, placement, score?, skill_tags?, telemetry? }] }
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { cors, json } from '../_shared/cors.ts'
-import { verify } from '../_shared/jwt.ts'
+import { cors, json } from './cors.ts'
+import { verify } from './jwt.ts'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })

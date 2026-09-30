@@ -18,9 +18,16 @@ Stack: Vite + React 19 + TypeScript + Tailwind 4 · Supabase (Auth with anonymou
 - Membership page with tier framing; Stripe functions written, deployed only when keys exist
 - Game adapter: `launch-game` (signed HS256 token) and `report-result` (writes results, ratings, reputation, telemetry) for VentureFlow / VentureBoom
 
-## Setup
+## Live (30 Sep 2026)
 
-1. Supabase project → SQL editor → run `supabase/migrations/0001_core.sql`, `0002_game_logic.sql`, `0003_seed.sql` in order.
+- App: https://venturearena.onrender.com (Render static site `venturearena`, auto-deploys from `main` of turnandbeirne/venturearena-vm)
+- Supabase project `venturearena` (ref `hyovqcgvqtdwzsizboim`, us-east-2): migrations 0001–0005 applied, anonymous sign-ins on, site URL set, secrets `ARENA_GAME_SECRET` + `ARENA_URL` set, `launch-game` and `report-result` deployed.
+- Tables seat up to 7 people: players fill the game's seats, everyone else is an observer (watches, chats, joins the debrief; no rating change). `/join/<code>/watch` seats a visitor as an observer.
+- Still to do: Stripe (when keys exist); VentureFlow adapter on the game side (the earlier VentureArena/Railway build becomes the VentureFlow game).
+
+## Setup (from scratch)
+
+1. Supabase project → SQL editor → run `supabase/migrations/0001` through `0005` in order.
 2. Authentication → Providers: enable Email and **Anonymous sign-ins**. URL configuration: site URL = your deploy URL.
 3. Edge Functions → Secrets: `ARENA_GAME_SECRET` (random 32+ chars), `ARENA_URL` (deploy URL). Deploy `launch-game` (JWT on) and `report-result` (JWT off; token-verified).
 4. `cp .env.example .env` and fill `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`. `npm i && npm run dev`.
