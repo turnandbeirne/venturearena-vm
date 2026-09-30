@@ -67,21 +67,26 @@ export default function TableRoom() {
   const isObserver = me?.role === 'observer'
   const state = table?.state ?? null
 
-  // host drives the bot: exactly one bot move per position (keyed by move count)
-  const lastBotMove = useRef<string>('')
+  // Host drives the bot: one move per board position. A pending timer is
+  // never cancelled by a re-render (seats/table reload constantly via
+  // realtime), and a failed call resets the key so the next tick retries.
+  const botTimer = useRef<{ key: string; id: number } | null>(null)
+  const botDone = useRef<Set<string>>(new Set())
+  const [botTick, setBotTick] = useState(0)
+  useEffect(() => { const t = setInterval(() => setBotTick(n => n + 1), 2500); return () => clearInterval(t) }, [])
   useEffect(() => {
     if (!table || table.status !== 'playing' || !state || state.winner !== null || !isHost || table.game_id !== 'connect4') return
     const botSeat = seats.find(s => s.is_bot && s.role === 'player' && s.seat === state.turn)
     if (!botSeat) return
     const key = `${table.id}:${state.moves}`
-    if (lastBotMove.current === key) return
-    lastBotMove.current = key
-    const t = setTimeout(async () => {
-      try { await rpc('make_move', { p_table: table.id, p_col: botMove(state.board, state.turn + 1) }) }
-      catch { lastBotMove.current = '' }
+    if (botTimer.current?.key === key || botDone.current.has(key)) return
+    const id = window.setTimeout(async () => {
+      try { await rpc('make_move', { p_table: table.id, p_col: botMove(state.board, state.turn + 1) }); botDone.current.add(key) }
+      catch { /* retried on the next tick */ }
+      finally { if (botTimer.current?.id === id) botTimer.current = null }
     }, 700)
-    return () => clearTimeout(t)
-  }, [table, state, seats, isHost])
+    botTimer.current = { key, id }
+  }, [table, state, seats, isHost, botTick])
 
   const act = async (fn: () => Promise<unknown>) => { setErr(''); try { await fn() } catch (e) { setErr((e as Error).message) } }
   const sit = () => act(() => rpc('join_table', { p_table: id, p_role: 'player' }))
