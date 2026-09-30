@@ -1,0 +1,167 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { supabase, rpc } from '../lib/supabase'
+import { useAuth } from '../lib/auth'
+import { ArchetypeBadge, RepShield } from '../components/PlayerCard'
+import { Connect4Board, botMove, type C4State } from '../components/Connect4'
+
+type Seat = { player_id: string; seat: number; is_bot: boolean; profile: { username: string; display_name: string | null; archetype: string | null; stage: string | null; bio: string | null } | null; rep?: number }
+type TableRow = { id: string; game_id: string; host_id: string; visibility: string; mode: string; status: string; invite_code: string; state: C4State | null; external_match_id: string | null }
+type Game = { id: string; name: string; kind: string; max_players: number; reflection_questions: string[]; launch_url: string | null; skills: string[] }
+type Msg = { id: number; from_id: string; body: string; created_at: string; from?: { username: string } }
+
+const SEAT_COLORS = ['#e8b64a', '#2fb7a6', '#a37cf0', '#5fc27a', '#f06c6c', '#8a97b5']
+const TABLE_QUESTIONS = ['What is the riskiest bet you are making this quarter?', 'What would you build if you could not fail?', 'Which of your customers would you clone?', 'What did your last game teach you about cash?']
+
+export default function TableRoom() {
+  const { id } = useParams(); const nav = useNavigate()
+  const { profile, tier, allows } = useAuth()
+  const [table, setTable] = useState<TableRow | null>(null)
+  const [game, setGame] = useState<Game | null>(null)
+  const [seats, setSeats] = useState<Seat[]>([])
+  const [msgs, setMsgs] = useState<Msg[]>([])
+  const [text, setText] = useState('')
+  const [err, setErr] = useState('')
+  const [copied, setCopied] = useState(false)
+  const botThinking = useRef(false)
+  const question = useRef(TABLE_QUESTIONS[Math.floor(Math.random() * TABLE_QUESTIONS.length)])
+
+  const load = useCallback(async () => {
+    if (!id) return
+    const { data: t } = await supabase.from('tables').select('*').eq('id', id).single()
+    if (!t) { setErr('Table not found or private.'); return }
+    setTable(t as TableRow)
+    const { data: s } = await supabase.from('table_seats').select('player_id, seat, is_bot, profile:profiles(username, display_name, archetype, stage, bio)').eq('table_id', id).order('seat')
+    const seatRows = (s ?? []) as unknown as Seat[]
+    const { data: reps } = await supabase.from('reputation').select('player_id, score').in('player_id', seatRows.map(x => x.player_id))
+    setSeats(seatRows.map(x => ({ ...x, rep: (reps ?? []).find(r => r.player_id === x.player_id)?.score ?? 100 })))
+    if (!game) { const { data: g } = await supabase.from('games').select('*').eq('id', (t as TableRow).game_id).single(); setGame(g as Game) }
+  }, [id, game])
+
+  useEffect(() => {
+    load()
+    supabase.from('messages').select('id, from_id, body, created_at, from:profiles!messages_from_id_fkey(username)').eq('table_id', id).order('created_at').limit(100)
+      .then(({ data }) => setMsgs((data ?? []) as unknown as Msg[]))
+    const ch = supabase.channel(`table-${id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tables', filter: `id=eq.${id}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'table_seats', filter: `table_id=eq.${id}` }, load)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `table_id=eq.${id}` }, async p => {
+        const m = p.new as Msg
+        const { data } = await supabase.from('profiles').select('username').eq('id', m.from_id).single()
+        setMsgs(ms => [...ms, { ...m, from: data ?? undefined }])
+      }).subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [id, load])
+
+  // finished -> debrief
+  useEffect(() => { if (table?.status === 'finished') nav(`/debrief/${table.id}`, { replace: true }) }, [table, nav])
+
+  const mySeat = seats.find(s => s.player_id === profile?.id)?.seat ?? null
+  const isHost = table?.host_id === profile?.id
+  const isSeated = mySeat !== null
+  const state = table?.state ?? null
+
+  // host drives the bot
+  useEffect(() => {
+    if (!table || table.status !== 'playing' || !state || state.winner !== null || !isHost || table.game_id !== 'connect4') return
+    const botSeat = seats.find(s => s.is_bot && s.seat === state.turn)
+    if (!botSeat || botThinking.current) return
+    botThinking.current = true
+    const t = setTimeout(async () => {
+      try { await rpc('make_move', { p_table: table.id, p_col: botMove(state.board, state.turn + 1) }) } catch { /* ignore */ }
+      botThinking.current = false
+    }, 700)
+    return () => clearTimeout(t)
+  }, [table, state, seats, isHost])
+
+  const act = async (fn: () => Promise<unknown>) => { setErr(''); try { await fn() } catch (e) { setErr((e as Error).message) } }
+  const sit = () => act(() => rpc('join_table', { p_table: id }))
+  const addBot = () => act(() => rpc('add_bot', { p_table: id }))
+  const start = () => act(() => rpc('start_table', { p_table: id }))
+  const leave = () => act(async () => { await rpc('abandon_table', { p_table: id }); nav('/play') })
+  const move = (col: number) => act(() => rpc('make_move', { p_table: id, p_col: col }))
+  const send = () => { if (!text.trim()) return; act(async () => { await supabase.from('messages').insert({ table_id: id, from_id: profile!.id, body: text.trim() }).throwOnError(); setText('') }) }
+  const launch = () => act(async () => {
+    const { data, error } = await supabase.functions.invoke('launch-game', { body: { table_id: id } })
+    if (error) throw new Error(error.message)
+    window.open(data.launch_url, '_blank')
+  })
+  const copy = () => { navigator.clipboard.writeText(`${location.origin}/join/${table?.invite_code}`); setCopied(true); setTimeout(() => setCopied(false), 1500) }
+
+  if (err && !table) return <div className="card p-6">{err} <button className="btn btn-ghost mt-3" onClick={() => nav('/play')}>Back to lobby</button></div>
+  if (!table || !game) return <div className="opacity-60">Loading table…</div>
+
+  const seatColors = seats.map(s => SEAT_COLORS[s.seat])
+
+  return (
+    <div className="grid lg:grid-cols-[1fr_320px] gap-6">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div><h1 className="display text-2xl font-extrabold">{game.name}</h1><div className="text-xs opacity-70 capitalize">{table.status} · {table.mode === 'turn_based' ? 'turn-based' : 'live'} · {table.visibility}</div></div>
+          <div className="flex gap-2">
+            <button className="btn btn-ghost text-sm" onClick={copy}>{copied ? 'Copied!' : 'Copy invite link'}</button>
+            <button className="btn btn-ghost text-sm" onClick={leave}>{table.status === 'playing' ? 'Forfeit' : 'Leave'}</button>
+          </div>
+        </div>
+        {err && <div className="card p-3 border-red-400/40 text-red-200 text-sm">{err}</div>}
+
+        {/* seats */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+          {seats.map(s => (
+            <div key={s.player_id} className={`card p-3 flex items-center gap-2 ${state && state.turn === s.seat && table.status === 'playing' ? 'border-gold' : ''}`}>
+              <span className="w-3 h-3 rounded-full shrink-0" style={{ background: SEAT_COLORS[s.seat] }} />
+              <ArchetypeBadge archetype={s.profile?.archetype} size="sm" />
+              <div className="min-w-0 flex-1"><div className="font-semibold text-sm truncate">{s.profile?.display_name || s.profile?.username}{s.is_bot ? ' 🤖' : ''}</div><div className="text-[11px] opacity-60 capitalize">{s.profile?.stage?.replace('_', ' ') ?? 'bot'}</div></div>
+              {!s.is_bot && <RepShield score={s.rep} />}
+            </div>
+          ))}
+          {Array.from({ length: Math.max(0, game.max_players - seats.length) }).map((_, i) => (
+            <div key={i} className="card p-3 border-dashed opacity-60 text-sm flex items-center justify-center">Open seat</div>
+          ))}
+        </div>
+
+        {/* actions */}
+        {table.status === 'open' && (
+          <div className="card p-4 flex flex-wrap gap-2 items-center">
+            {!isSeated && <button className="btn btn-gold" onClick={sit}>Take a seat</button>}
+            {isSeated && game.kind === 'builtin' && seats.length < game.max_players && <button className="btn btn-ghost" onClick={addBot}>Add a bot</button>}
+            {isHost && <button className="btn btn-gold" onClick={start} disabled={seats.length < 2}>Start game</button>}
+            {!isHost && isSeated && <span className="text-sm opacity-70">Waiting for the host to start…</span>}
+            <div className="w-full text-sm opacity-80 mt-2"><span className="opacity-60">Question of the table:</span> {question.current}</div>
+          </div>
+        )}
+
+        {table.status === 'playing' && game.id === 'connect4' && state && (
+          <div className="card p-4">
+            <div className="text-sm mb-3">{state.winner !== null ? 'Game over' : state.turn === mySeat ? <span className="text-gold font-semibold">Your move</span> : `Waiting for ${seats.find(s => s.seat === state.turn)?.profile?.username ?? '…'}`}</div>
+            <Connect4Board state={state} mySeat={mySeat} seatColors={seatColors} onMove={move} disabled={!isSeated} />
+            <div className="text-xs opacity-60 mt-3">What to watch for: control the center column; build threats in two directions at once.</div>
+          </div>
+        )}
+
+        {table.status === 'playing' && game.kind === 'external' && (
+          <div className="card p-5">
+            <div className="display font-bold text-lg">Play {game.name} in its own tab</div>
+            <p className="text-sm opacity-75 mt-1">The arena signs a token so {game.name} knows who is at this table. When the round ends, the result comes back here and everyone lands in the Debrief.</p>
+            <button className="btn btn-gold mt-3" onClick={launch}>Launch {game.name}</button>
+            <p className="text-xs opacity-50 mt-2">Waiting for a result from the game…</p>
+          </div>
+        )}
+      </div>
+
+      {/* chat */}
+      <div className="card p-3 flex flex-col h-[420px] lg:h-[calc(100vh-8rem)] lg:sticky lg:top-6">
+        <div className="text-xs uppercase tracking-wide opacity-60 mb-2">Table talk</div>
+        <div className="flex-1 overflow-y-auto space-y-2 text-sm pr-1">
+          {msgs.length === 0 && <div className="opacity-50 text-xs">Say hello. Or answer the question of the table.</div>}
+          {msgs.map(m => <div key={m.id}><span className="font-semibold opacity-80">{m.from?.username ?? '…'}</span> <span className="opacity-90">{m.body}</span></div>)}
+        </div>
+        <div className="flex gap-2 mt-2">
+          <input className="input" placeholder={isSeated ? 'Message the table' : 'Take a seat to chat'} value={text} disabled={!isSeated} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} />
+          <button className="btn btn-gold" onClick={send} disabled={!isSeated}>Send</button>
+        </div>
+        {tier === 'free' && !allows('dm_anyone') && <div className="text-[11px] opacity-50 mt-2">Table chat is open to everyone. Direct messages to anyone are a Member feature.</div>}
+      </div>
+    </div>
+  )
+}
