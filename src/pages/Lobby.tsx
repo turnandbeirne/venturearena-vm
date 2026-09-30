@@ -55,7 +55,8 @@ export default function Lobby() {
   const join = async (id: string, role: 'player' | 'observer' = 'player') => { setErr(''); try { await rpc('join_table', { p_table: id, p_role: role }); nav(`/t/${id}`) } catch (e) { setErr((e as Error).message) } }
   const quick = async (game: string) => { setErr(''); try { const id = await rpc<string>('quick_match', { p_game: game }); nav(`/t/${id}`) } catch (e) { setErr((e as Error).message) } }
 
-  const playable = games.filter(g => g.id === 'connect4' || g.kind === 'external')
+  const playable = games.filter(g => g.kind === 'builtin' ? g.id === 'connect4' : g.kind === 'external')
+  const soon = games.filter(g => g.kind === 'soon' || (g.kind === 'builtin' && g.id !== 'connect4'))
 
   return (
     <div className="space-y-8">
@@ -88,6 +89,17 @@ export default function Lobby() {
           ))}
         </div>
         {tier === 'free' && profile?.is_anonymous && <p className="text-xs opacity-60 mt-2">Guests can join any public table. Add an email on your profile to host tables and keep your history.</p>}
+        {soon.length > 0 && (
+          <div className="grid md:grid-cols-3 gap-3 mt-3">
+            {soon.map(g => (
+              <div key={g.id} className="card p-4 opacity-70 border-dashed">
+                <div className="flex items-center justify-between"><div className="display font-bold text-lg">{g.name}</div><span className="chip">Coming soon</span></div>
+                <p className="text-sm opacity-75 mt-1">{g.tagline}</p>
+                <div className="flex flex-wrap gap-1 mt-3">{g.skills.map(sk => <span key={sk} className="chip">{sk}</span>)}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section>

@@ -23,6 +23,7 @@ export default function TableRoom() {
   const [text, setText] = useState('')
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState(false)
+  const [scores, setScores] = useState<{ player_id: string; score: number; reported_at: string }[]>([])
   const question = useRef(TABLE_QUESTIONS[Math.floor(Math.random() * TABLE_QUESTIONS.length)])
 
   const load = useCallback(async () => {
@@ -35,6 +36,8 @@ export default function TableRoom() {
     const { data: reps } = await supabase.from('reputation').select('player_id, score').in('player_id', seatRows.map(x => x.player_id))
     setSeats(seatRows.map(x => ({ ...x, rep: (reps ?? []).find(r => r.player_id === x.player_id)?.score ?? 100 })))
     if (!game) { const { data: g } = await supabase.from('games').select('*').eq('id', (t as TableRow).game_id).single(); setGame(g as Game) }
+    const { data: sc } = await supabase.from('external_scores').select('player_id, score, reported_at').eq('table_id', id)
+    setScores((sc ?? []) as { player_id: string; score: number; reported_at: string }[])
   }, [id, game])
 
   useEffect(() => {
@@ -44,6 +47,7 @@ export default function TableRoom() {
     const ch = supabase.channel(`table-${id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tables', filter: `id=eq.${id}` }, load)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'table_seats', filter: `table_id=eq.${id}` }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'external_scores', filter: `table_id=eq.${id}` }, load)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `table_id=eq.${id}` }, async p => {
         const m = p.new as Msg
         const { data } = await supabase.from('profiles').select('username').eq('id', m.from_id).single()
@@ -84,7 +88,8 @@ export default function TableRoom() {
   const watch = () => act(() => rpc('join_table', { p_table: id, p_role: 'observer' }))
   const switchRole = (role: 'player' | 'observer') => act(() => rpc('set_role', { p_table: id, p_role: role }))
   const addBot = () => act(() => rpc('add_bot', { p_table: id }))
-  const start = () => act(() => rpc('start_table', { p_table: id }))
+  const start = () => act(() => rpc(game?.kind === 'external' ? 'start_external' : 'start_table', { p_table: id }))
+  const finalize = () => act(() => rpc('finalize_external', { p_table: id }))
   const leave = () => act(async () => { await rpc('abandon_table', { p_table: id }); nav('/play') })
   const move = (col: number) => act(() => rpc('make_move', { p_table: id, p_col: col }))
   const send = () => { if (!text.trim()) return; act(async () => { await supabase.from('messages').insert({ table_id: id, from_id: profile!.id, body: text.trim() }).throwOnError(); setText('') }) }
@@ -142,7 +147,7 @@ export default function TableRoom() {
             {isObserver && <button className="btn btn-gold" onClick={() => switchRole('player')} disabled={seatsFull}>Take a seat instead</button>}
             {isSeated && !isObserver && !isHost && <button className="btn btn-ghost" onClick={() => switchRole('observer')}>Watch instead</button>}
             {isSeated && game.kind === 'builtin' && !seatsFull && <button className="btn btn-ghost" onClick={addBot}>Add a bot</button>}
-            {isHost && <button className="btn btn-gold" onClick={start} disabled={players.length < 2}>Start game</button>}
+            {isHost && <button className="btn btn-gold" onClick={start} disabled={game.kind === 'external' ? players.filter(p => !p.is_bot).length < 1 : players.length < 2}>{game.kind === 'external' ? 'Start the race' : 'Start game'}</button>}
             {!isHost && isSeated && <span className="text-sm opacity-70">{isObserver ? "You're watching. " : ''}Waiting for the host to start…</span>}
             <div className="w-full text-sm opacity-80 mt-2"><span className="opacity-60">Question of the table:</span> {question.current}</div>
           </div>
@@ -158,10 +163,20 @@ export default function TableRoom() {
 
         {table.status === 'playing' && game.kind === 'external' && (
           <div className="card p-5">
-            <div className="display font-bold text-lg">Play {game.name} in its own tab</div>
-            <p className="text-sm opacity-75 mt-1">The arena signs a token so {game.name} knows who is at this table. When the round ends, the result comes back here and everyone lands in the Debrief.</p>
-            {isObserver ? <p className="text-sm mt-3 opacity-70">You're watching this one. The result and the debrief will show up here when the round ends.</p> : <button className="btn btn-gold mt-3" onClick={launch}>Launch {game.name}</button>}
-            <p className="text-xs opacity-50 mt-2">Waiting for a result from the game…</p>
+            <div className="display font-bold text-lg">{game.name} · live table</div>
+            <p className="text-sm opacity-75 mt-1">{game.id === 'ventureflow'
+              ? `One live game for everyone here: ${players.filter(p => !p.is_bot).length} of you plus robots to fill four chairs, turns taken from your own screens. The host's game opens first and deals everyone in; when the 24 months are up, the standings come back here and everyone lands in the Debrief.`
+              : 'Play in the game\'s own tab. When it ends, the result comes back here and everyone lands in the Debrief.'}</p>
+            <button className="btn btn-gold mt-3" onClick={launch}>{isObserver ? `Watch ${game.name}` : isHost ? `Open ${game.name} and deal everyone in` : `Open ${game.name}`}</button>
+            {!isHost && !isObserver && <p className="text-xs opacity-60 mt-2">If the host hasn't opened the game yet, your game shows "Setting the table" until they do.</p>}
+            {scores.length > 0 && <div className="mt-4 space-y-1 text-sm">
+              {players.filter(p => !p.is_bot).map(p => { const sc = scores.find(x => x.player_id === p.player_id); return (
+                <div key={p.player_id} className="flex items-center gap-2"><ArchetypeBadge archetype={p.profile?.archetype} size="sm" /><span className="flex-1">{p.profile?.display_name || p.profile?.username}</span>{sc ? <span className="text-backer">reported · ${Math.round(Number(sc.score)).toLocaleString()}</span> : <span className="opacity-50">still playing…</span>}</div>
+              ) })}
+            </div>}
+            {isHost && scores.length > 0 && scores.length < players.filter(p => !p.is_bot).length && (
+              <button className="btn btn-ghost text-sm mt-4" onClick={finalize} title="Rank the scores that are in; players who have not reported place last">Finalize now</button>
+            )}
           </div>
         )}
       </div>

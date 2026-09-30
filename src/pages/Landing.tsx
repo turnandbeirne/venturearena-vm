@@ -11,6 +11,7 @@ export default function Landing() {
   const [cards, setCards] = useState<CardData[]>([])
   const [busy, setBusy] = useState(false)
   const [login, setLogin] = useState(false)
+  const fromGame = new URLSearchParams(location.search).get('from')
   const [email, setEmail] = useState(''); const [pw, setPw] = useState(''); const [err, setErr] = useState('')
 
   useEffect(() => { if (!loading && session) nav('/play', { replace: true }) }, [session, loading, nav])
@@ -40,6 +41,7 @@ export default function Landing() {
       )}
       <section className="max-w-5xl mx-auto px-6 pt-10 pb-16 grid md:grid-cols-2 gap-10 items-center">
         <div>
+          {fromGame === 'ventureflow' && <div className="chip mb-3" style={{ background: 'var(--color-gold)', color: '#1a1200' }}>Coming from VentureFlow? Enter, pick a name, and open a VentureFlow table to play others live.</div>}
           <h1 className="display text-4xl md:text-5xl font-extrabold leading-tight">Practice business.<br />Meet your people.</h1>
           <p className="mt-4 text-lg opacity-85 max-w-md">Strategy games where every round is a business decision, played against aspiring founders, mentors and investors. Learn something about each other, then keep talking.</p>
           <div className="mt-6 flex gap-3 flex-wrap">

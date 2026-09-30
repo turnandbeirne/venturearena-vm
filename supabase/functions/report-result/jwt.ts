@@ -7,7 +7,7 @@ const fromB64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replac
 async function key(secret: string, usage: KeyUsage[]) {
   return crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, usage)
 }
-export async function sign(payload: Record<string, unknown>, secret: string, ttlSeconds = 7200) {
+export async function sign(payload: Record<string, unknown>, secret: string, ttlSeconds = 86400) {
   const header = b64uStr(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   const body = b64uStr(JSON.stringify({ ...payload, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + ttlSeconds }))
   const sig = await crypto.subtle.sign('HMAC', await key(secret, ['sign']), enc.encode(`${header}.${body}`))
