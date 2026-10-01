@@ -58,18 +58,6 @@ export default function TableRoom() {
     return () => { supabase.removeChannel(ch) }
   }, [id, load])
 
-  // The host's last configuration becomes the default for their next table
-  // (only while the table still has the server defaults and nobody else is in).
-  const appliedLast = useRef(false)
-  useEffect(() => {
-    if (appliedLast.current || !table || table.status !== 'open' || table.game_id !== 'ventureflow' || table.host_id !== profile?.id) return
-    appliedLast.current = true
-    const last = lastSettings()
-    if (last && seats.length <= 1 && (table.settings?.preset ?? 'classic') === 'classic' && (table.settings?.bots?.length ?? 0) === 0) {
-      rpc('set_table_settings', { p_table: table.id, p_settings: last }).catch(() => { /* keep defaults */ })
-    }
-  }, [table, seats, profile])
-
   // finished -> debrief
   useEffect(() => { if (table?.status === 'finished') nav(`/debrief/${table.id}`, { replace: true }) }, [table, nav])
 
@@ -125,7 +113,8 @@ export default function TableRoom() {
   if (!table || !game) return <div className="opacity-60">Loading table…</div>
 
   const seatColors = players.map(s => SEAT_COLORS[s.seat])
-  const seatsFull = players.length >= game.max_players - (vfSettings?.bots.length ?? 0); const tableFull = seats.length >= 7
+  const seatsFull = players.length >= game.max_players; const tableFull = seats.length >= 7
+  const last = isHost && table.status === 'open' && vfSettings ? lastSettings() : null
 
   return (
     <div className="grid lg:grid-cols-[1fr_320px] gap-6">
@@ -150,15 +139,16 @@ export default function TableRoom() {
               {!s.is_bot && <RepShield score={s.rep} />}
             </div>
           ))}
-          {(vfSettings?.bots ?? []).map((b, i) => { const d = describeBot(b); return (
-            <div key={`bot${i}`} className="card p-3 flex items-center gap-2 opacity-90">
-              <span className="w-3 h-3 rounded-full shrink-0" style={{ background: SEAT_COLORS[(players.length + i) % SEAT_COLORS.length] }} />
-              <span className="text-xl leading-none">{d.avatar}</span>
-              <div className="min-w-0 flex-1"><div className="font-semibold text-sm truncate">{d.name} 🤖</div><div className="text-[11px] opacity-60">{d.skillIcon} {d.skill} · robot chair</div></div>
-            </div>) })}
-          {Array.from({ length: Math.max(0, game.max_players - players.length - (vfSettings?.bots.length ?? 0)) }).map((_, i) => (
-            <div key={i} className="card p-3 border-dashed opacity-60 text-sm flex items-center justify-center">{vfSettings?.fillWithRobots && table.status === 'open' ? 'Open seat · robot if empty' : 'Open seat'}</div>
-          ))}
+          {Array.from({ length: Math.max(0, game.max_players - players.length) }).map((_, i) => {
+            const bot = vfSettings ? (vfSettings.bots[i] ?? (vfSettings.fillWithRobots ? { personalityId: 'random', skillLevelId: 'random' } : null)) : null
+            const d = bot ? describeBot(bot) : null
+            return (
+              <div key={`open${i}`} className="card p-3 border-dashed flex items-center gap-2">
+                {d ? <span className="text-xl leading-none opacity-70">{d.avatar}</span> : <span className="w-3 h-3 rounded-full shrink-0 opacity-30 bg-white" />}
+                <div className="min-w-0 flex-1 text-sm"><div className="font-semibold opacity-80">Open seat</div>
+                  <div className="text-[11px] opacity-60 truncate">{table.status === 'open' ? (d ? `${d.name} (${d.skill}) plays here if nobody sits` : 'stays empty unless someone sits') : ''}</div></div>
+              </div>)
+          })}
         </div>
         <div className="card p-3 flex items-center gap-2 flex-wrap text-sm">
           <span className="opacity-60">Watching ({observers.length}) · {7 - seats.length} spots left at this table</span>
@@ -167,7 +157,10 @@ export default function TableRoom() {
         </div>
 
         {vfSettings && (
-          <TableSettings settings={vfSettings} isHost={isHost} locked={table.status !== 'open'} humans={players.filter(p => !p.is_bot).length} maxPlayers={game.max_players} canCustomize={allows('vf_custom_settings')} onChange={saveSettings} />
+          <>
+            <TableSettings settings={vfSettings} isHost={isHost} locked={table.status !== 'open'} humans={players.filter(p => !p.is_bot).length} maxPlayers={game.max_players} canCustomize={allows('vf_custom_settings')} onChange={saveSettings} />
+            {last && JSON.stringify(last) !== JSON.stringify(vfSettings) && <button className="btn btn-ghost text-sm -mt-2" onClick={() => act(() => saveSettings(last))}>Use the settings from my last table</button>}
+          </>
         )}
 
         {/* actions */}
@@ -196,7 +189,7 @@ export default function TableRoom() {
           <div className="card p-5">
             <div className="display font-bold text-lg">{game.name} · live table</div>
             <p className="text-sm opacity-75 mt-1">{game.id === 'ventureflow'
-              ? `One live game for everyone here: ${players.filter(p => !p.is_bot).length} of you plus ${vfSettings?.bots.length ?? 0} robot${(vfSettings?.bots.length ?? 0) === 1 ? '' : 's'}, turns taken from your own screens. The host's game opens first and deals everyone in; when the 24 months are up, the standings come back here and everyone lands in the Debrief.`
+              ? `One live game for everyone here: ${players.filter(p => !p.is_bot).length} of you plus ${vfSettings?.aiCount ?? 0} robot${(vfSettings?.aiCount ?? 0) === 1 ? '' : 's'}, turns taken from your own screens. The host's game opens first and deals everyone in; when the 24 months are up, the standings come back here and everyone lands in the Debrief.`
               : 'Play in the game\'s own tab. When it ends, the result comes back here and everyone lands in the Debrief.'}</p>
             <button className="btn btn-gold mt-3" onClick={launch}>{isObserver ? `Watch ${game.name}` : isHost ? `Open ${game.name} and deal everyone in` : `Open ${game.name}`}</button>
             {!isHost && !isObserver && <p className="text-xs opacity-60 mt-2">If the host hasn't opened the game yet, your game shows "Setting the table" until they do.</p>}

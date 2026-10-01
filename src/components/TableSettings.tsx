@@ -34,7 +34,7 @@ function Pick<T extends { id: string; name: string; icon?: string; avatar?: stri
 
 export function TableSettings({ settings, isHost, locked, humans, maxPlayers, canCustomize, onChange }: Props) {
   const [draft, setDraft] = useState<VfSettings>(settings)
-  const [open, setOpen] = useState(settings.preset === 'custom')
+  const [open, setOpen] = useState(isHost && !locked)   // the host lands on the full form; everyone else sees the summary
   const [saving, setSaving] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [msg, setMsg] = useState('')
   const timer = useRef<number | null>(null)
@@ -59,13 +59,14 @@ export function TableSettings({ settings, isHost, locked, humans, maxPlayers, ca
   const addBot = () => patch({ bots: [...draft.bots, { personalityId: 'random', skillLevelId: 'random' }] })
   const removeBot = (i: number) => patch({ bots: draft.bots.filter((_, j) => j !== i) })
 
-  const freeChairs = maxPlayers - humans - draft.bots.length
+  const emptyChairs = Math.max(0, maxPlayers - humans)
+  const robotsAtStart = draft.fillWithRobots ? emptyChairs : Math.min(emptyChairs, draft.bots.length)
   const scenario = SCENARIOS.find(s => s.id === draft.scenarioId); const diff = DIFFICULTIES.find(d => d.id === draft.difficultyId); const wx = WEATHER.find(w => w.id === draft.weatherSeverityId)
 
   return (
     <div className="card p-4 space-y-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="display font-bold">Game settings {locked && <span className="text-xs font-normal opacity-60">· locked</span>}</div>
+        <div className="display font-bold">{editable ? 'Set up your game' : 'Game settings'} {locked && <span className="text-xs font-normal opacity-60">· locked at start</span>}</div>
         <div className="text-xs opacity-60">
           {saving === 'saving' && 'Saving…'}{saving === 'saved' && 'Saved · everyone sees this'}{saving === 'error' && <span className="text-red-300">{msg}</span>}
           {saving === 'idle' && !isHost && !locked && 'The host sets these. Talk it over in table chat.'}
@@ -90,7 +91,7 @@ export function TableSettings({ settings, isHost, locked, humans, maxPlayers, ca
         <span>{diff?.icon} {diff?.name}</span>
         <span>{wx?.icon} {wx?.name} weather</span>
         <span>{draft.turnTimer ? '⏱️ 30s turns' : '🕰️ No clock'}</span>
-        <span>🤖 {draft.bots.length} robot{draft.bots.length === 1 ? '' : 's'}{draft.fillWithRobots && freeChairs > 0 ? ` (+${freeChairs} more if chairs stay empty)` : ''}</span>
+        <span>🤖 {robotsAtStart} robot{robotsAtStart === 1 ? '' : 's'} if the table started now{draft.fillWithRobots ? '' : ' (empty chairs stay empty)'}</span>
       </div>
 
       {editable && (
@@ -105,10 +106,11 @@ export function TableSettings({ settings, isHost, locked, humans, maxPlayers, ca
           <Pick label="Economic weather" options={WEATHER} value={draft.weatherSeverityId} onPick={id => patch({ weatherSeverityId: id })} disabled={!editable || !customOk} />
           <div className="flex flex-wrap gap-4 text-sm">
             <label className="flex items-center gap-2"><input type="checkbox" checked={draft.turnTimer} disabled={!editable} onChange={e => patch({ turnTimer: e.target.checked })} /> Turn clock (30s, with extensions)</label>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={draft.fillWithRobots} disabled={!editable} onChange={e => patch({ fillWithRobots: e.target.checked })} /> Fill empty chairs with robots at start</label>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={draft.fillWithRobots} disabled={!editable} onChange={e => patch({ fillWithRobots: e.target.checked })} /> Fill every empty chair with a robot at start</label>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-wide opacity-60 mb-1">Robot chairs · {maxPlayers} chairs at the table, {humans} taken by people</div>
+            <div className="text-[11px] uppercase tracking-wide opacity-60 mb-1">Robot line-up · fills chairs people leave empty, in this order</div>
+            <div className="text-xs opacity-70 mb-2">{maxPlayers} chairs at the table, {humans} taken by people. A person who joins always gets the chair; the robot steps aside.</div>
             <div className="space-y-2">
               {draft.bots.map((b, i) => {
                 const d = describeBot(b)
@@ -123,8 +125,8 @@ export function TableSettings({ settings, isHost, locked, humans, maxPlayers, ca
                   </div>
                 )
               })}
-              {editable && draft.bots.length < maxPlayers - 1 && freeChairs > 0 && <button type="button" className="btn btn-ghost text-sm" onClick={addBot}>+ Reserve a robot chair</button>}
-              {editable && freeChairs <= 0 && draft.bots.length < maxPlayers - 1 && <div className="text-xs opacity-60">All chairs are spoken for. Remove a robot to open one for a person.</div>}
+              {editable && draft.bots.length < maxPlayers - 1 && <button type="button" className="btn btn-ghost text-sm" onClick={addBot}>+ Add a robot to the line-up</button>}
+              {draft.fillWithRobots && draft.bots.length < maxPlayers - 1 && <div className="text-xs opacity-60">Chairs beyond the line-up get a surprise robot of any skill.</div>}
             </div>
           </div>
           <div className="text-xs opacity-60">Play speed, sound and hints stay personal in the game. Robot turns are paced by the host's speed setting.</div>

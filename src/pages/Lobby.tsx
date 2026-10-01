@@ -11,6 +11,7 @@ export default function Lobby() {
   const { profile, tier, allows } = useAuth(); const nav = useNavigate()
   const [games, setGames] = useState<Game[]>([])
   const [tables, setTables] = useState<OpenTable[]>([])
+  const [mine, setMine] = useState<{ id: string; game_id: string; status: string; host_id: string; people: number; role: string }[]>([])
   const [online, setOnline] = useState<{ username: string; archetype: string | null; id: string }[]>([])
   const [recs, setRecs] = useState<(CardData & { reason: string; match_type: string })[]>([])
   const [err, setErr] = useState('')
@@ -21,6 +22,8 @@ export default function Lobby() {
       .select('id, game_id, visibility, mode, status, created_at, invite_code, host:profiles!tables_host_id_fkey(username, archetype), seats:table_seats(player_id, is_bot, role, profile:profiles(username, archetype))')
       .eq('status', 'open').eq('visibility', 'public').order('created_at', { ascending: false }).limit(30)
     setTables((t ?? []) as unknown as OpenTable[])
+    const { data: m } = await supabase.rpc('my_tables')
+    setMine((m ?? []) as typeof mine)
   }
 
   useEffect(() => {
@@ -89,6 +92,7 @@ export default function Lobby() {
           ))}
         </div>
         {tier === 'free' && profile?.is_anonymous && <p className="text-xs opacity-60 mt-2">Guests can join any public table. Add an email on your profile to host tables and keep your history.</p>}
+        <p className="text-xs opacity-60 mt-2">Hosting several tables at once: free accounts 1, Members 3, VIPs 10, CEOs unlimited.</p>
         {soon.length > 0 && (
           <div className="grid md:grid-cols-3 gap-3 mt-3">
             {soon.map(g => (
@@ -101,6 +105,22 @@ export default function Lobby() {
           </div>
         )}
       </section>
+
+      {mine.length > 0 && (
+        <section>
+          <h2 className="display font-bold text-lg mb-2">Your tables</h2>
+          <div className="grid md:grid-cols-2 gap-3">
+            {mine.map(t => { const g = games.find(x => x.id === t.game_id); return (
+              <div key={t.id} className="card p-4 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold">{g?.name ?? t.game_id} <span className="chip ml-1 capitalize">{t.status === 'open' ? 'waiting' : 'in play'}</span></div>
+                  <div className="text-xs opacity-70">{t.role === 'host' ? 'You host' : t.role === 'observer' ? 'You watch' : 'You play'} · {t.people} at the table</div>
+                </div>
+                <button className="btn btn-gold text-sm" onClick={() => nav(`/t/${t.id}`)}>{t.status === 'open' ? 'Go to table' : 'Rejoin'}</button>
+              </div>) })}
+          </div>
+        </section>
+      )}
 
       <section>
         <h2 className="display font-bold text-lg mb-2">Open tables</h2>
