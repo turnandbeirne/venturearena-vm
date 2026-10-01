@@ -75,3 +75,9 @@ export function describeBot(b: BotConfig) {
 const LAST_KEY = 'va_vf_last_settings'
 export function rememberSettings(s: VfSettings) { try { localStorage.setItem(LAST_KEY, JSON.stringify(s)) } catch { /* private mode */ } }
 export function lastSettings(): VfSettings | null { try { const raw = localStorage.getItem(LAST_KEY); return raw ? normalize(JSON.parse(raw)) : null } catch { return null } }
+
+export function summarizeSettings(s: VfSettings) {
+  const n = (list: { id: string; name: string }[], id: string) => list.find(x => x.id === id)?.name ?? id
+  const bots = s.bots.length ? s.bots.map(b => { const d = describeBot(b); return `${d.name} (${d.skill})` }).join(', ') : 'none picked'
+  return `${s.preset === 'custom' ? 'Custom' : PRESETS[s.preset].name}: ${n(SCENARIOS, s.scenarioId)} · ${n(DIFFICULTIES, s.difficultyId)} · ${n(WEATHER, s.weatherSeverityId)} weather · ${s.turnTimer ? '30s clock' : 'no clock'} · robots: ${bots}${s.fillWithRobots ? ' + fill empty chairs' : ''}`
+}

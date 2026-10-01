@@ -6,7 +6,7 @@ export type CardData = {
   id: string; username: string; display_name?: string | null; archetype?: string | null; stage?: string | null
   intent?: string[]; interests?: string[]; tier?: string; reputation?: number; kudos?: number; games_played?: number
   rating?: number; chips?: Record<string, number>; dna?: { risk?: number; pace?: number; collab?: string }
-  prompts?: { q: string; a: string }[]; open_to_mentoring?: number; is_investor?: boolean; is_anonymous?: boolean; bio?: string | null
+  prompts?: { q: string; a: string }[]; open_to_mentoring?: number; is_investor?: boolean; is_anonymous?: boolean; bio?: string | null; playing_style?: string | null
 }
 
 export function ArchetypeBadge({ archetype, size = 'md' }: { archetype?: string | null; size?: 'sm' | 'md' | 'lg' }) {

@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { FeedbackButton } from './FeedbackButton'
 import { useAuth } from '../lib/auth'
 import { useEffect } from 'react'
 import { ArchetypeBadge } from './PlayerCard'
@@ -44,6 +45,7 @@ export default function Layout() {
         {tabs.map(t => <NavLink key={t.to} to={t.to} className={({ isActive }) => `flex flex-col items-center text-xs px-3 ${isActive ? 'text-gold' : 'opacity-70'}`}><span className="text-lg">{t.icon}</span>{t.label}</NavLink>)}
       </nav>
       <button onClick={quick} className="md:hidden fixed bottom-16 right-4 btn btn-gold shadow-lg z-20">Find me a game</button>
+      <FeedbackButton />
     </div>
   )
 }

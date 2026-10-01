@@ -2,7 +2,8 @@
 // Body: { token, seq, action }. The token is the arena launch token (HMAC, ARENA_GAME_SECRET).
 // Rules: the caller must be a human player at the table; player actions must be for the caller's own
 // seat; robot turns, timers, card acknowledgements and the game start may only come from the host
-// (the lowest human seat); a seat takeover may come from the host or the seat's owner.
+// (the lowest human seat); a seat takeover may come from the host or the seat's owner (resign);
+// a KICK_VOTE must be cast as the caller's own seat.
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { cors, json } from './cors.ts'
 import { verify } from './jwt.ts'
@@ -34,7 +35,15 @@ Deno.serve(async (req) => {
       if (t === 'END_TURN' && isAiSeat) { if (!isHost) return json({ error: 'only the host ends robot turns' }, 403) }
       else if (pid !== myPid && !(isHost && isAiSeat)) return json({ error: `that seat is not yours` }, 403)
     }
-    else if (t === 'CONVERT_SEAT_TO_AI') { if (!isHost && action.playerId !== myPid) return json({ error: 'only the host can hand a seat to a robot' }, 403) }
+    else if (t === 'CONVERT_SEAT_TO_AI') {
+      if (!isHost && action.playerId !== myPid) return json({ error: 'only the host can hand a seat to a robot' }, 403)
+      action.reason = action.playerId === myPid ? 'resigned' : (action.reason === 'away' ? 'away' : 'host')
+    }
+    else if (t === 'KICK_VOTE') {
+      // one vote per live player, cast for their own seat, never against themselves
+      if (action.voterId !== myPid) return json({ error: 'you can only vote as yourself' }, 403)
+      if (action.playerId === myPid) return json({ error: 'you cannot vote yourself out' }, 400)
+    }
     else if (!ANYONE_ACTIONS.has(t)) return json({ error: `action ${t} is not allowed at a table` }, 400)
     if (t === 'START_GAME' && seq !== 1) return json({ error: 'the game has already started' }, 409)
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)

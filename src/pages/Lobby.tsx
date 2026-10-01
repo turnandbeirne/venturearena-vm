@@ -51,6 +51,10 @@ export default function Lobby() {
     return () => { supabase.removeChannel(presence) }
   }, [profile])
 
+  const closeTables = async (staleOnly: boolean) => {
+    setErr('')
+    try { const n = await rpc<number>('close_my_tables', { p_stale_only: staleOnly }); setErr(n ? `Closed ${n} table${n === 1 ? '' : 's'}.` : staleOnly ? 'No tables older than 2 hours.' : 'No open tables.'); load() } catch (e) { setErr((e as Error).message) }
+  }
   const create = async (game: string) => {
     setErr(''); setCreating(game)
     try { const id = await rpc<string>('create_table', { p_game: game }); nav(`/t/${id}`) } catch (e) { setErr((e as Error).message) } finally { setCreating(null) }
@@ -108,7 +112,13 @@ export default function Lobby() {
 
       {mine.length > 0 && (
         <section>
-          <h2 className="display font-bold text-lg mb-2">Your tables</h2>
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <h2 className="display font-bold text-lg">Your tables</h2>
+            <div className="flex gap-2">
+              <button className="btn btn-ghost text-xs" title="Leave or end every table of yours older than 2 hours" onClick={() => closeTables(true)}>Close stale tables</button>
+              <button className="btn btn-ghost text-xs" title="Leave every table you are at and end the ones you host" onClick={() => closeTables(false)}>Close all my tables</button>
+            </div>
+          </div>
           <div className="grid md:grid-cols-2 gap-3">
             {mine.map(t => { const g = games.find(x => x.id === t.game_id); return (
               <div key={t.id} className="card p-4 flex items-center gap-3">

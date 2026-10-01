@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth'
 import { ArchetypeBadge, RepShield } from '../components/PlayerCard'
 import { Connect4Board, botMove, type C4State } from '../components/Connect4'
 import { TableSettings } from '../components/TableSettings'
-import { describeBot, lastSettings, normalize, rememberSettings, type VfSettings } from '../lib/vfSettings'
+import { describeBot, lastSettings, normalize, rememberSettings, summarizeSettings, type VfSettings } from '../lib/vfSettings'
 
 type Seat = { player_id: string; seat: number; is_bot: boolean; role: 'player' | 'observer'; profile: { username: string; display_name: string | null; archetype: string | null; stage: string | null; bio: string | null } | null; rep?: number }
 type TableRow = { id: string; game_id: string; host_id: string; visibility: string; mode: string; status: string; invite_code: string; state: C4State | null; external_match_id: string | null; settings: Partial<VfSettings> | null }
@@ -106,7 +106,23 @@ export default function TableRoom() {
     window.open(data.launch_url, '_blank')
   })
   const vfSettings = table?.game_id === 'ventureflow' ? normalize(table.settings) : null
-  const saveSettings = async (s: VfSettings) => { await rpc('set_table_settings', { p_table: id, p_settings: s }); rememberSettings(s) }
+  // Settings changes are announced in chat so partners can react, but a host
+  // clicking through options gets one trailing note (per 5s), not a flood.
+  const noteTimer = useRef<number | null>(null); const lastNote = useRef('')
+  const announce = (s: VfSettings) => {
+    if (noteTimer.current) window.clearTimeout(noteTimer.current)
+    noteTimer.current = window.setTimeout(async () => {
+      const note = `⚙️ ${summarizeSettings(s)}`
+      if (note === lastNote.current) return
+      lastNote.current = note
+      await supabase.from('messages').insert({ table_id: id, from_id: profile!.id, body: note })
+    }, 5000)
+  }
+  const saveSettings = async (s: VfSettings) => {
+    await rpc('set_table_settings', { p_table: id, p_settings: s }); rememberSettings(s)
+    if (seats.length > 1) announce(s)
+  }
+  const suggest = (text: string) => act(async () => { await supabase.from('messages').insert({ table_id: id, from_id: profile!.id, body: `💡 ${text}` }).throwOnError() })
   const copy = (mode?: 'watch') => { navigator.clipboard.writeText(`${location.origin}/join/${table?.invite_code}${mode ? '/watch' : ''}`); setCopied(true); setTimeout(() => setCopied(false), 1500) }
 
   if (err && !table) return <div className="card p-6">{err} <button className="btn btn-ghost mt-3" onClick={() => nav('/play')}>Back to lobby</button></div>
@@ -135,7 +151,7 @@ export default function TableRoom() {
             <div key={s.player_id} className={`card p-3 flex items-center gap-2 ${state && state.turn === s.seat && table.status === 'playing' ? 'border-gold' : ''}`}>
               <span className="w-3 h-3 rounded-full shrink-0" style={{ background: SEAT_COLORS[s.seat] }} />
               <ArchetypeBadge archetype={s.profile?.archetype} size="sm" />
-              <div className="min-w-0 flex-1"><div className="font-semibold text-sm truncate">{s.profile?.display_name || s.profile?.username}{s.is_bot ? ' 🤖' : ''}</div><div className="text-[11px] opacity-60 capitalize">{s.profile?.stage?.replace('_', ' ') ?? 'bot'}</div></div>
+              <div className="min-w-0 flex-1"><div className="font-semibold text-sm truncate">{s.profile?.display_name || s.profile?.username}{s.is_bot ? ' 🤖' : ''}</div><div className="text-[11px] opacity-60 capitalize">{s.is_bot ? 'robot' : s.profile?.stage?.replace('_', ' ') ?? 'new here'}</div></div>
               {!s.is_bot && <RepShield score={s.rep} />}
             </div>
           ))}
@@ -158,7 +174,7 @@ export default function TableRoom() {
 
         {vfSettings && (
           <>
-            <TableSettings settings={vfSettings} isHost={isHost} locked={table.status !== 'open'} humans={players.filter(p => !p.is_bot).length} maxPlayers={game.max_players} canCustomize={allows('vf_custom_settings')} onChange={saveSettings} />
+            <TableSettings settings={vfSettings} isHost={isHost} locked={table.status !== 'open'} humans={players.filter(p => !p.is_bot).length} maxPlayers={game.max_players} canCustomize={allows('vf_custom_settings')} onChange={saveSettings} onSuggest={isSeated ? suggest : undefined} />
             {last && JSON.stringify(last) !== JSON.stringify(vfSettings) && <button className="btn btn-ghost text-sm -mt-2" onClick={() => act(() => saveSettings(last))}>Use the settings from my last table</button>}
           </>
         )}

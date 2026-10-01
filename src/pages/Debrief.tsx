@@ -7,6 +7,30 @@ import { CHIPS } from '../lib/archetypes'
 
 type Res = { player_id: string; placement: number; rating_before: number; rating_after: number; profile: { username: string; display_name: string | null; archetype: string | null } | null; is_bot?: boolean }
 type Answer = { player_id: string; answer: string; profile: { username: string } | null }
+type Metrics = { netWorth?: number; cash?: number; passive?: number; businesses?: number; units?: number; spent?: number; goodCards?: number; badCards?: number; badges?: number; tookOver?: boolean; takeoverReason?: string | null; finishedBy?: string | null; goalMonth?: number | null; months?: number; scenarioId?: string }
+
+// Elo brackets shown as a skill rank so a number means something at a glance.
+export function skillRank(r: number) {
+  if (r >= 1450) return { name: 'Mogul', icon: '👑' }
+  if (r >= 1300) return { name: 'Shark', icon: '🦈' }
+  if (r >= 1150) return { name: 'Operator', icon: '⚙️' }
+  return { name: 'Apprentice', icon: '🌱' }
+}
+
+function observations(m: Metrics | undefined, placement: number | undefined, n: number): string[] {
+  if (!m) return []
+  const o: string[] = []
+  if ((m.businesses ?? 0) >= 2) o.push(`Builder: started ${m.businesses} businesses`)
+  else if ((m.businesses ?? 0) === 1) o.push('Started a business')
+  if ((m.passive ?? 0) >= 150) o.push(`Cashflow engine: $${Math.round(m.passive!).toLocaleString()}/month passive at the end`)
+  if ((m.units ?? 0) >= 30) o.push(`Accumulator: ${m.units} units held across assets`)
+  if ((m.badCards ?? 0) > (m.goodCards ?? 0) && placement === 1) o.push('Resilient: won despite more bad fortune cards than good')
+  if ((m.goodCards ?? 0) + (m.badCards ?? 0) > 0) o.push(`Fortune: ${m.goodCards ?? 0} good · ${m.badCards ?? 0} bad`)
+  if (m.goalMonth) o.push(`Hit the scenario goal in month ${m.goalMonth}`)
+  if (m.tookOver) o.push(`A robot (${m.finishedBy ?? 'bot'}) finished this game${m.takeoverReason === 'resigned' ? ' after a resignation' : m.takeoverReason === 'vote' ? ' after the table voted' : ''}`)
+  if (placement === 1 && n > 1) o.push(`Won against ${n - 1} other${n - 1 === 1 ? '' : 's'}`)
+  return o
+}
 
 export default function Debrief() {
   const { id } = useParams(); const nav = useNavigate(); const { profile, allows } = useAuth()
@@ -17,6 +41,8 @@ export default function Debrief() {
   const [given, setGiven] = useState<Record<string, { chip: string; kudos: boolean }>>({})
   const [connected, setConnected] = useState<Record<string, boolean>>({})
   const [err, setErr] = useState('')
+  const [metrics, setMetrics] = useState<Record<string, Metrics>>({})
+  const [rank, setRank] = useState<{ rating: number; games: number; wins: number } | null>(null)
 
   const question = useMemo(() => {
     const qs = game?.reflection_questions ?? []
@@ -36,6 +62,9 @@ export default function Debrief() {
       setResults(((r ?? []) as unknown as Res[]).map(x => ({ ...x, is_bot: (s ?? []).find(y => y.player_id === x.player_id)?.is_bot })))
       const { data: a } = await supabase.from('debriefs').select('player_id, answer, profile:profiles(username)').eq('table_id', id)
       setAnswers((a ?? []) as unknown as Answer[])
+      const { data: tm } = await supabase.from('telemetry').select('player_id, metrics').eq('table_id', id)
+      setMetrics(Object.fromEntries(((tm ?? []) as { player_id: string; metrics: Metrics }[]).map(x => [x.player_id, x.metrics])))
+      if (profile?.id) { const { data: rt } = await supabase.from('ratings').select('rating, games_played, wins').eq('player_id', profile.id).eq('game_id', t.game_id).maybeSingle(); if (rt) setRank({ rating: rt.rating, games: rt.games_played, wins: rt.wins }) }
       const { data: c } = await supabase.from('connections').select('requester_id, addressee_id').eq('requester_id', profile?.id ?? '')
       setConnected(Object.fromEntries((c ?? []).map(x => [x.addressee_id, true])))
     })()
@@ -56,21 +85,33 @@ export default function Debrief() {
   const others = results.filter(r => r.player_id !== profile?.id && !r.is_bot)
   const iWatched = results.length > 0 && !results.some(r => r.player_id === profile?.id)
   const myAnswer = answers.find(a => a.player_id === profile?.id)
+  const iWon = !!me && me.placement === 1 && others.every(o => o.placement > 1)
+  const myObs = observations(metrics[profile?.id ?? ''], me?.placement, results.length)
+  const myRank = rank ? skillRank(rank.rating) : null
 
   if (!game) return <div className="opacity-60">Loading debrief…</div>
 
   return (
     <div className="max-w-2xl mx-auto space-y-5">
-      <div className="card p-5">
+      {iWon && <Confetti />}
+      <div className={`card p-5 ${iWon ? 'border-gold shadow-[0_0_40px_rgba(232,182,74,0.25)]' : ''}`}>
         <div className="text-xs uppercase tracking-wide opacity-60">Result · {game.name}</div>
-        <div className="display text-3xl font-extrabold mt-1">{me ? (me.placement === 1 && others.every(o => o.placement > 1) ? 'You won' : me.placement === 1 ? 'Draw' : 'Good game') : iWatched ? 'You watched' : 'Game over'}</div>
+        <div className="display text-3xl font-extrabold mt-1">{me ? (iWon ? '🏆 You won!' : me.placement === 1 ? 'Draw' : me.placement === 2 ? 'Runner-up' : 'Good game') : iWatched ? 'You watched' : 'Game over'}</div>
+        {iWon && <div className="text-gold text-sm mt-1">Winner's circle. Your rating, reputation and this result are now on your card and in your history.</div>}
+        {me && (
+          <div className="mt-3 grid sm:grid-cols-[auto_1fr] gap-3 items-start">
+            {myRank && rank && <div className="chip text-sm px-3 py-2" title={`Rating ${rank.rating} · ${rank.wins} wins in ${rank.games} games`}>{myRank.icon} Skill rank: <b className="ml-1">{myRank.name}</b> <span className="opacity-60 ml-1">· {rank.rating}{me.rating_after - me.rating_before !== 0 && <span className={me.rating_after >= me.rating_before ? 'text-backer' : 'text-red-300'}> ({me.rating_after - me.rating_before >= 0 ? '+' : ''}{me.rating_after - me.rating_before})</span>}</span></div>}
+            {myObs.length > 0 && <div className="text-sm"><div className="text-xs uppercase tracking-wide opacity-60">How you played</div><ul className="mt-1 space-y-0.5">{myObs.map(o => <li key={o}>· {o}</li>)}</ul></div>}
+          </div>
+        )}
         {iWatched && <div className="text-sm opacity-70 mt-1">Observers don't get a rating change, but your take on the game counts in the debrief.</div>}
         <div className="mt-3 space-y-1">
           {results.map(r => (
             <div key={r.player_id} className="flex items-center gap-2 text-sm">
               <span className="w-5 opacity-60">{r.placement}.</span><ArchetypeBadge archetype={r.profile?.archetype} size="sm" />
               <span className="font-medium flex-1">{r.profile?.display_name || r.profile?.username}{r.is_bot ? ' 🤖' : ''}</span>
-              {!r.is_bot && <span className={r.rating_after >= r.rating_before ? 'text-backer' : 'text-red-300'}>{r.rating_after - r.rating_before >= 0 ? '+' : ''}{r.rating_after - r.rating_before} → {r.rating_after}</span>}
+              {metrics[r.player_id]?.netWorth != null && <span className="opacity-70">${Math.round(metrics[r.player_id].netWorth!).toLocaleString()}</span>}
+              {!r.is_bot && <span className={r.rating_after >= r.rating_before ? 'text-backer' : 'text-red-300'}>{r.rating_after - r.rating_before >= 0 ? '+' : ''}{r.rating_after - r.rating_before} → {r.rating_after} {skillRank(r.rating_after).icon}</span>}
             </div>
           ))}
         </div>
@@ -109,6 +150,18 @@ export default function Debrief() {
         <button className="btn btn-gold" onClick={rematch} disabled={!allows('create_table')}>Play again</button>
         <Link to="/play" className="btn btn-ghost">Back to the arena</Link>
       </div>
+    </div>
+  )
+}
+
+function Confetti() {
+  const pieces = Array.from({ length: 48 }, (_, i) => i)
+  const colors = ['#e8b64a', '#2fb7a6', '#a37cf0', '#5fc27a', '#f06c6c', '#ffffff']
+  return (
+    <div className="pointer-events-none fixed inset-0 z-10 overflow-hidden" aria-hidden>
+      {pieces.map(i => (
+        <span key={i} className="confetti" style={{ left: `${(i * 37) % 100}%`, background: colors[i % colors.length], animationDelay: `${(i % 12) * 0.15}s`, animationDuration: `${2.6 + (i % 5) * 0.4}s`, transform: `rotate(${(i * 53) % 360}deg)` }} />
+      ))}
     </div>
   )
 }

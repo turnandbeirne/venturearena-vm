@@ -8,6 +8,7 @@ type P = { id: string; username: string; display_name: string | null; archetype:
 type Conn = { requester_id: string; addressee_id: string; status: string; source: string; requester: P; addressee: P }
 type Intro = { id: string; kind: string; from_id: string; to_id: string; reason: string; status: string; from: P; to: P }
 type Msg = { id: number; from_id: string; to_id: string; body: string; created_at: string }
+const ARENA_ID = '00000000-0000-0000-0000-00000000b0b0'   // the arena's own voice (feedback replies, notices)
 
 export default function Inbox() {
   const { profile, allows } = useAuth()
@@ -48,11 +49,22 @@ export default function Inbox() {
   const pending = conns.filter(c => c.status === 'pending' && c.addressee_id === profile?.id)
   const accepted = conns.filter(c => c.status === 'accepted')
   const pendingIntros = intros.filter(i => i.status === 'pending' && i.to_id === profile?.id)
+  const [notes, setNotes] = useState<Msg[]>([])
+  useEffect(() => {
+    if (!profile) return
+    const load = () => supabase.from('messages').select('*').is('table_id', null).eq('to_id', profile.id).eq('from_id', ARENA_ID).order('created_at', { ascending: false }).limit(20).then(({ data }) => setNotes((data ?? []) as Msg[]))
+    load()
+    const ch = supabase.channel(`notes-${profile.id}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `to_id=eq.${profile.id}` }, load).subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [profile])
 
   return (
     <div className="grid md:grid-cols-[320px_1fr] gap-6">
       <div className="space-y-5">
         <h1 className="display text-3xl font-extrabold">Inbox</h1>
+        {notes.length > 0 && <section><div className="text-xs uppercase tracking-wide opacity-60 mb-2">From the arena</div>{notes.map(n => (
+          <div key={n.id} className="card p-3 mb-2 text-sm"><div className="opacity-85">{n.body}</div><div className="text-[11px] opacity-50 mt-1">{new Date(n.created_at).toLocaleString()}</div></div>
+        ))}</section>}
         {pendingIntros.length > 0 && <section><div className="text-xs uppercase tracking-wide opacity-60 mb-2">Introductions</div>{pendingIntros.map(i => (
           <div key={i.id} className="card p-3 mb-2 text-sm"><div className="flex items-center gap-2"><ArchetypeBadge archetype={i.from.archetype} size="sm" /><Link to={`/p/${i.from.username}`} className="font-semibold">{i.from.display_name || i.from.username}</Link><span className="chip capitalize">{i.kind}</span></div><div className="opacity-75 mt-1">{i.reason}</div><div className="flex gap-2 mt-2"><button className="btn btn-gold text-xs" onClick={() => answerIntro(i, 'accepted')}>Accept</button><button className="btn btn-ghost text-xs" onClick={() => answerIntro(i, 'declined')}>Not now</button></div></div>
         ))}</section>}
